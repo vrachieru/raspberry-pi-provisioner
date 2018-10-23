@@ -1,0 +1,140 @@
+# https://github.com/seemoo-lab/nexmon#build-patches-for-bcm43430a1-on-the-rpi3zero-w-or-bcm434355c0-on-the-rpi3-using-raspbian-recommended
+---
+
+- name: 'update and upgrade apt packages'
+  apt:
+    upgrade: yes
+    update_cache: yes
+    cache_valid_time: 86400 # one day
+
+- name: 'install kernel headers and dependencies'
+  apt:
+    name: '{{ item }}'
+    state: 'present'
+  with_items:
+    - 'raspberrypi-kernel-headers'
+    - 'git'
+    - 'libgmp3-dev'
+    - 'gawk'
+    - 'qpdf'
+    - 'bison'
+    - 'flex'
+    - 'make'
+
+- name: 'check if nexmon exists'
+  stat:
+    path: '{{ nexmon_root }}'
+  register: nexmon
+
+- name: 'clone repository'
+  git:
+    repo: 'https://github.com/seemoo-lab/nexmon.git'
+    dest: '{{ nexmon_root }}'
+  when: not nexmon.stat.exists
+
+- name: 'check if libisl.so.10 exists'
+  stat:
+    path: /usr/lib/arm-linux-gnueabihf/libisl.so.10
+  register: libisl_so_10
+
+- name: 'compile libisl.so.10'
+  command: './configure && make && make install'
+  args:
+    chdir: '{{ nexmon_root }}/buildtools/isl-0.10'
+  when: not libisl_so_10.stat.exists
+
+- name: 'link libisl.so.10'
+  file:
+    src: '/usr/local/lib/libisl.so'
+    dest: '/usr/lib/arm-linux-gnueabihf/libisl.so.10'
+    state: link
+
+- name: 'compile build tools and extract the ucode and flashpatches from the original firmware files'
+  command: 'make'
+  args:
+    chdir: '{{ nexmon_root }}'
+
+- name: 'determine raspberry pi model'
+  command: 'awk "/^Revision/ {sub(\"^1000\", \"\", $3); print $3}" /proc/cpuinfo'
+  register: raspberry_revision
+
+- name: 'infer wifi chipset driver patch: bcm43430a1 (Raspberry Pi Zero W / Raspberry Pi 3B)'
+  set_fact:
+    nexmon_patch: 'bcm43430a1/7_45_41_46' 
+  when: raspberry_revision.stdout in ['9000c1', 'a02082', 'a020a0', 'a22082', 'a32082']
+
+- name: 'infer wifi chipset driver patch: bcm43455c0 (Raspberry Pi 3B+)'
+  set_fact:
+    nexmon_patch: 'bcm43455c0/7_45_154' 
+  when: raspberry_revision.stdout in ['a020d3']
+
+- name: 'compile patched firmware'
+  command: 'make'
+  args:
+    chdir: '{{ nexmon_root }}/patches/{{ nexmon_patch }}/nexmon/'
+
+- name: 'generate a backup of original firmware'
+  command: 'make backup-firmware'
+  args:
+    chdir: '{{ nexmon_root }}/patches/{{ nexmon_patch }}/nexmon/'
+
+- name: 'install the patched firmware'
+  command: 'make install-firmware'
+  args:
+    chdir: '{{ nexmon_root }}/patches/{{ nexmon_patch }}/nexmon/'
+
+- name: 'install nexutil'
+  command: '{{ item }}'
+  with_items:
+    - 'make'
+    - 'make install'
+  args:
+    chdir: '{{ nexmon_root }}/utilities/nexutil'
+
+- name: 'get wireless physical interface'
+  shell: 'iw dev {{ nexmon_wireless_interface }} info | gawk ''/wiphy/ {printf "phy" $2}'''
+  register: nexmon_physical_wireless_interface
+
+- name: 'setup new monitor interface'
+  command: 'iw phy {{ nexmon_physical_wireless_interface.stdout }} interface add {{ nexmon_monitor_interface }} type monitor'
+
+- name: 'activate monitor mode in the firmware'
+  command: 'ifconfig {{ nexmon_monitor_interface }} up'
+
+- name: 'find path of original driver'
+  shell: 'modinfo brcmfmac | awk ''/filename/ {printf $2}'''
+  register: wireless_original_driver
+
+- name: 'backup original driver'
+  copy:
+    src: '{{ wireless_original_driver.stdout }}'
+    dest: '{{ wireless_original_driver.stdout }}.orig'
+    remote_src: yes
+
+- name: 'infer nexmon kernel: 4.9'
+  set_fact:
+    nexmon_kernel: 'brcmfmac_kernel49'
+  when: ansible_kernel | regex_search('^4.9' | string)
+
+- name: 'infer nexmon kernel: 4.14'
+  set_fact:
+    nexmon_kernel: 'brcmfmac_4.14.y-nexmon'
+  when: ansible_kernel | regex_search('^4.14' | string)
+
+- name: 'override original wireless driver with nexmon driver'
+  copy:
+    src: '{{ nexmon_root }}/patches/{{ nexmon_patch }}/nexmon/{{ nexmon_kernel }}/brcmfmac.ko'
+    dest: '{{ wireless_original_driver.stdout }}'
+    owner: root
+    group: root
+    mode: 0644
+    force: yes
+    remote_src: yes
+
+- name: 'probe all modules and generate new dependency'
+  command: 'depmod -a'
+
+- name: 'cleanup source files'
+  file:
+    state: absent
+    path: '{{ nexmon_root }}'

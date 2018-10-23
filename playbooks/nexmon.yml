@@ -1,0 +1,20 @@
+---
+
+- hosts: all
+  become: true
+  gather_facts: true
+  any_errors_fatal: true
+  environment:
+    - ARCH: arm
+    - SUBARCH: arm
+    - KERNEL: kernel7
+    - HOSTUNAME: '{{ ansible_system }}' # Linux
+    - PLATFORMUNAME: '{{ ansible_machine }}' # armv7l
+    - CC: '{{ nexmon_root }}/buildtools/gcc-arm-none-eabi-5_4-2016q2-linux-armv7l/bin/arm-none-eabi-'
+    - CCPLUGIN: '{{ nexmon_root }}/buildtools/gcc-nexmon-plugin-arm/nexmon.so'
+    - ZLIBFLATE: zlib-flate -compress
+    - NEXMON_ROOT: '{{ nexmon_root }}'
+    - NEXMON_SETUP_ENV: 1
+    - OLD_PWD: '{{ nexmon_root }}'
+  roles:
+    - nexmon

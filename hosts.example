@@ -1,0 +1,14 @@
+pi001    ansible_host=192.168.100.1
+pi002    ansible_host=192.168.100.2
+pi003    ansible_host=192.168.100.3
+pi004    ansible_host=192.168.100.4
+pi005    ansible_host=192.168.100.5
+
+[piv2]
+pi001
+pi002
+
+[piv3]
+pi003
+pi004
+pi005

@@ -1,0 +1,7 @@
+---
+
+nexmon_root: '/home/{{ ansible_user }}/nexmon'
+
+nexmon_wireless_interface: 'wlan0'
+
+nexmon_monitor_interface: 'mon0'
